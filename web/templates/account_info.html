@@ -1,0 +1,26 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/accounts">&larr; accounts</a></p>
+<h2>Account: {{.Account}}</h2>
+<p class="muted">{{.Instance.PDSHost}}</p>
+<pre>{{.Info}}</pre>
+
+<h3>Update</h3>
+<form class="stacked" method="post" action="/instances/{{.Instance.Name}}/accounts/{{.Account}}/update">
+  <label>New email <input name="email" type="email" autocomplete="off"></label>
+  <label>New handle <input name="handle" autocomplete="off"></label>
+  <button type="submit">Update</button>
+</form>
+
+<h3>Reset password</h3>
+<form method="post" action="/instances/{{.Instance.Name}}/accounts/{{.Account}}/reset-password"
+      onsubmit="return confirm('Reset password for {{.Account}}? A new password will be generated and shown once.')">
+  <button class="danger">Reset password</button>
+</form>
+
+<h3 class="danger">Delete account</h3>
+<p class="muted">Type the DID to confirm. This is permanent.</p>
+<form class="stacked" method="post" action="/instances/{{.Instance.Name}}/accounts/{{.Account}}/delete">
+  <label>Confirm DID <input name="confirm" autocomplete="off" placeholder="{{.Account}}"></label>
+  <button class="danger" type="submit">Delete account</button>
+</form>
+{{end}}

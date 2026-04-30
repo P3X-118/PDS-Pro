@@ -3,9 +3,11 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	htmltemplate "html/template"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +50,17 @@ func (s *Server) Routes() http.Handler {
 		r.Get("/instances/{instance}/accounts", s.accountList)
 		r.Get("/instances/{instance}/accounts/new", s.accountNewForm)
 		r.Post("/instances/{instance}/accounts", s.accountCreate)
+		r.Get("/instances/{instance}/accounts/{user}", s.accountInfo)
 		r.Post("/instances/{instance}/accounts/{user}/takedown", s.accountTakedown)
+		r.Post("/instances/{instance}/accounts/{user}/reset-password", s.accountResetPassword)
+		r.Post("/instances/{instance}/accounts/{user}/delete", s.accountDelete)
+		r.Post("/instances/{instance}/accounts/{user}/update", s.accountUpdate)
+		r.Get("/instances/{instance}/invites", s.invitesForm)
+		r.Post("/instances/{instance}/invites", s.invitesCreate)
+		r.Get("/instances/{instance}/blob", s.blobForm)
+		r.Post("/instances/{instance}/blob/purge", s.blobPurge)
+		r.Get("/instances/{instance}/crawl", s.crawlForm)
+		r.Post("/instances/{instance}/crawl", s.crawlRequest)
 	})
 
 	return r
@@ -277,6 +289,352 @@ func (s *Server) accountTakedown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/instances/"+instName+"/accounts", http.StatusSeeOther)
+}
+
+func (s *Server) accountInfo(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := chi.URLParam(r, "user")
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	info, err := cli.AccountInfo(r.Context(), user)
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "account.info", Result: result, Error: errMsg,
+		Args: map[string]string{"user": user},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	pretty, _ := indentJSON(info)
+	s.render(w, "account_info.html", map[string]any{
+		"User":     u,
+		"Instance": inst,
+		"Account":  user,
+		"Info":     pretty,
+	})
+}
+
+func (s *Server) accountResetPassword(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") && !auth.HasRole(u.Roles, "instance-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := chi.URLParam(r, "user")
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pw, err := cli.AccountResetPassword(r.Context(), user)
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "account.reset_password", Result: result, Error: errMsg,
+		Args: map[string]string{"user": user},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.render(w, "account_reset_password.html", map[string]any{
+		"User":     u,
+		"Instance": inst,
+		"Account":  user,
+		"Password": pw,
+	})
+}
+
+func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := chi.URLParam(r, "user")
+	if r.FormValue("confirm") != user {
+		http.Error(w, "confirmation did not match account", http.StatusBadRequest)
+		return
+	}
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = cli.AccountDelete(r.Context(), user)
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "account.delete", Result: result, Error: errMsg,
+		Args: map[string]string{"user": user},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, "/instances/"+instName+"/accounts", http.StatusSeeOther)
+}
+
+func (s *Server) accountUpdate(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") && !auth.HasRole(u.Roles, "instance-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := chi.URLParam(r, "user")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	in := goat.UpdateAccountInput{
+		Email:  strings.TrimSpace(r.FormValue("email")),
+		Handle: strings.TrimSpace(r.FormValue("handle")),
+	}
+	if in.Email == "" && in.Handle == "" {
+		http.Error(w, "supply at least one of email/handle", http.StatusBadRequest)
+		return
+	}
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, err = cli.AccountUpdate(r.Context(), user, in)
+	result, errMsg := resultPair(err)
+	args := map[string]string{"user": user}
+	if in.Email != "" {
+		args["email"] = in.Email
+	}
+	if in.Handle != "" {
+		args["handle"] = in.Handle
+	}
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "account.update", Result: result, Error: errMsg, Args: args,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, "/instances/"+instName+"/accounts/"+user, http.StatusSeeOther)
+}
+
+func (s *Server) invitesForm(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "invites.html", map[string]any{"User": u, "Instance": inst})
+}
+
+func (s *Server) invitesCreate(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") && !auth.HasRole(u.Roles, "instance-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	count := atoiOr(r.FormValue("count"), 1)
+	uses := atoiOr(r.FormValue("uses"), 1)
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	codes, err := cli.CreateInvites(r.Context(), count, uses)
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "invites.create", Result: result, Error: errMsg,
+		Args: map[string]string{"count": fmt.Sprintf("%d", count), "uses": fmt.Sprintf("%d", uses)},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.render(w, "invites_created.html", map[string]any{
+		"User":     u,
+		"Instance": inst,
+		"Codes":    codes,
+		"Uses":     uses,
+	})
+}
+
+func (s *Server) blobForm(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "blob.html", map[string]any{"User": u, "Instance": inst})
+}
+
+func (s *Server) blobPurge(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") && !auth.HasRole(u.Roles, "instance-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	user := strings.TrimSpace(r.FormValue("user"))
+	cid := strings.TrimSpace(r.FormValue("cid"))
+	reverse := r.FormValue("reverse") == "1"
+	if user == "" || cid == "" {
+		http.Error(w, "user and cid are required", http.StatusBadRequest)
+		return
+	}
+	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = cli.BlobPurge(r.Context(), user, cid, reverse)
+	action := "blob.purge"
+	if reverse {
+		action = "blob.purge.reverse"
+	}
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: action, Result: result, Error: errMsg,
+		Args: map[string]string{"user": user, "cid": cid},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, "/instances/"+instName+"/blob", http.StatusSeeOther)
+}
+
+func (s *Server) crawlForm(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "crawl.html", map[string]any{"User": u, "Instance": inst})
+}
+
+func (s *Server) crawlRequest(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	if !auth.HasRole(u.Roles, "super-admin") && !auth.HasRole(u.Roles, "instance-admin") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	instName := chi.URLParam(r, "instance")
+	inst := s.cfg.Instance(instName)
+	if inst == nil {
+		http.NotFound(w, r)
+		return
+	}
+	relay := strings.TrimSpace(r.FormValue("relay"))
+	if relay == "" {
+		http.Error(w, "relay url required", http.StatusBadRequest)
+		return
+	}
+	hostname := pdsHostFromURL(inst.PDSHost)
+	err := goat.RequestCrawl(r.Context(), relay, hostname)
+	result, errMsg := resultPair(err)
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Instance: instName, Action: "relay.request_crawl", Result: result, Error: errMsg,
+		Args: map[string]string{"relay": relay, "hostname": hostname},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.render(w, "crawl_done.html", map[string]any{
+		"User":     u,
+		"Instance": inst,
+		"Relay":    relay,
+		"Hostname": hostname,
+	})
+}
+
+func resultPair(err error) (string, string) {
+	if err == nil {
+		return "ok", ""
+	}
+	return "error", err.Error()
+}
+
+func indentJSON(b []byte) (string, error) {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return string(b), err
+	}
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return string(b), err
+	}
+	return string(out), nil
+}
+
+func atoiOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return def
+	}
+	return n
+}
+
+func pdsHostFromURL(u string) string {
+	u = strings.TrimPrefix(u, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	if i := strings.IndexAny(u, "/?"); i != -1 {
+		u = u[:i]
+	}
+	return u
 }
 
 func fullName(gu goth.User) string {

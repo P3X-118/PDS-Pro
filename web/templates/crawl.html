@@ -1,0 +1,13 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/accounts">&larr; accounts</a></p>
+<h2>Request crawl — {{.Instance.Name}}</h2>
+<p class="muted">
+  Asks a relay to crawl this PDS. Useful when bringing up a new instance or
+  if a relay missed an event. The relay must be an https URL — typically
+  <code>https://bsky.network</code> for the public Bluesky relay.
+</p>
+<form class="stacked" method="post" action="/instances/{{.Instance.Name}}/crawl">
+  <label>Relay URL <input name="relay" required value="https://bsky.network" autocomplete="off"></label>
+  <button type="submit">Request crawl</button>
+</form>
+{{end}}

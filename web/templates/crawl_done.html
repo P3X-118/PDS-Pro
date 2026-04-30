@@ -1,0 +1,9 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/crawl">&larr; back</a></p>
+<h2>Crawl requested</h2>
+<table>
+  <tr><th>Relay</th><td><code>{{.Relay}}</code></td></tr>
+  <tr><th>PDS hostname</th><td><code>{{.Hostname}}</code></td></tr>
+</table>
+<p>The relay will now begin crawling this PDS. Check the relay logs (or monitoring) to confirm.</p>
+{{end}}

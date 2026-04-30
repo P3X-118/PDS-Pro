@@ -98,6 +98,83 @@ func (c *Client) AccountInfo(ctx context.Context, user string) (json.RawMessage,
 	return json.RawMessage(out), nil
 }
 
+func (c *Client) AccountDelete(ctx context.Context, user string) error {
+	_, err := c.run(ctx, "pds", "admin", "account", "delete", user)
+	return err
+}
+
+func (c *Client) AccountResetPassword(ctx context.Context, user string) (string, error) {
+	out, err := c.run(ctx, "pds", "admin", "account", "reset-password", user)
+	if err != nil {
+		return "", err
+	}
+	// goat prints "new password: <pw>"
+	line := strings.TrimSpace(string(out))
+	if i := strings.LastIndex(line, ": "); i != -1 {
+		return strings.TrimSpace(line[i+2:]), nil
+	}
+	return line, nil
+}
+
+type UpdateAccountInput struct {
+	Email  string
+	Handle string
+}
+
+func (c *Client) AccountUpdate(ctx context.Context, user string, in UpdateAccountInput) ([]byte, error) {
+	args := []string{"pds", "admin", "account", "update"}
+	if in.Email != "" {
+		args = append(args, "--email", in.Email)
+	}
+	if in.Handle != "" {
+		args = append(args, "--handle", in.Handle)
+	}
+	args = append(args, user)
+	return c.run(ctx, args...)
+}
+
+func (c *Client) BlobStatus(ctx context.Context, user, cid string) (json.RawMessage, error) {
+	out, err := c.run(ctx, "pds", "admin", "blob", "status", user, cid)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(out), nil
+}
+
+func (c *Client) BlobPurge(ctx context.Context, user, cid string, reverse bool) error {
+	args := []string{"pds", "admin", "blob", "purge"}
+	if reverse {
+		args = append(args, "--reverse")
+	}
+	args = append(args, user, cid)
+	_, err := c.run(ctx, args...)
+	return err
+}
+
+func (c *Client) CreateInvites(ctx context.Context, count, uses int) ([]string, error) {
+	if count < 1 {
+		count = 1
+	}
+	if uses < 1 {
+		uses = 1
+	}
+	out, err := c.run(ctx, "pds", "admin", "create-invites",
+		"--count", fmt.Sprintf("%d", count),
+		"--uses", fmt.Sprintf("%d", uses),
+	)
+	if err != nil {
+		return nil, err
+	}
+	var codes []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			codes = append(codes, line)
+		}
+	}
+	return codes, nil
+}
+
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	if len(args) < 3 || args[0] != "pds" || args[1] != "admin" {
 		return nil, fmt.Errorf("goat: expected args starting with \"pds admin\"")

@@ -1,0 +1,9 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/accounts">&larr; accounts</a></p>
+<h2>Create invite codes — {{.Instance.Name}}</h2>
+<form class="stacked" method="post" action="/instances/{{.Instance.Name}}/invites">
+  <label>Number of codes <input name="count" type="number" min="1" value="1"></label>
+  <label>Uses per code <input name="uses" type="number" min="1" value="1"></label>
+  <button type="submit">Create</button>
+</form>
+{{end}}

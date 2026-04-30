@@ -1,0 +1,11 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/accounts">&larr; accounts</a></p>
+<h2>Blob moderation — {{.Instance.Name}}</h2>
+<form class="stacked" method="post" action="/instances/{{.Instance.Name}}/blob/purge">
+  <label>Account (handle or DID) <input name="user" required autocomplete="off"></label>
+  <label>Blob CID <input name="cid" required autocomplete="off"></label>
+  <label><input type="checkbox" name="reverse" value="1"> Reverse (un-purge)</label>
+  <button class="danger" type="submit">Apply</button>
+</form>
+<p class="muted">Status lookups are not in the form yet — this purges (or un-purges) immediately. Status check coming in a follow-up.</p>
+{{end}}

@@ -2,14 +2,19 @@
 <p><a href="/">&larr; instances</a></p>
 <h2>{{.Instance.Name}} accounts</h2>
 <p class="muted">{{.Instance.PDSHost}}</p>
-<p><a href="/instances/{{.Instance.Name}}/accounts/new"><button>+ New account</button></a></p>
+<p>
+  <a href="/instances/{{.Instance.Name}}/accounts/new"><button>+ New account</button></a>
+  <a href="/instances/{{.Instance.Name}}/invites"><button>Invite codes</button></a>
+  <a href="/instances/{{.Instance.Name}}/blob"><button>Blob moderation</button></a>
+  <a href="/instances/{{.Instance.Name}}/crawl"><button>Request crawl</button></a>
+</p>
 {{if .Accounts}}
 <table>
   <thead><tr><th>DID</th><th>Status</th><th>Rev</th><th class="actions"></th></tr></thead>
   <tbody>
   {{range .Accounts}}
     <tr>
-      <td>{{.DID}}</td>
+      <td><a href="/instances/{{$.Instance.Name}}/accounts/{{.DID}}">{{.DID}}</a></td>
       <td>{{.Status}}</td>
       <td>{{.Rev}}</td>
       <td class="actions">

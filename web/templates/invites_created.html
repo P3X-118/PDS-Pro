@@ -1,0 +1,10 @@
+{{define "content"}}
+<p><a href="/instances/{{.Instance.Name}}/invites">&larr; invites</a></p>
+<h2>Invite codes ({{.Uses}} use{{if ne .Uses 1}}s{{end}} each)</h2>
+<table>
+  <thead><tr><th>Code</th></tr></thead>
+  <tbody>
+  {{range .Codes}}<tr><td><code>{{.}}</code></td></tr>{{end}}
+  </tbody>
+</table>
+{{end}}
