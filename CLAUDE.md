@@ -4,12 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`sgc-pds-admin` is a small Go web app that fronts `goat pds admin` with operator-level OAuth so SGC operators can manage Bluesky PDS instances without sharing the `PDS_ADMIN_PASSWORD`. One admin instance manages multiple PDS instances.
+`PDS-Pro` is a small Go web app that fronts `goat pds admin` with operator-level OAuth so SGC operators can manage Bluesky PDS instances without sharing the `PDS_ADMIN_PASSWORD`. One admin instance manages multiple PDS instances.
 
 It's a **sibling project** to:
 - `~/sgc/apps/pds/` — the SGC fork of `bluesky-social/pds` (multi-domain deployment work)
 - `~/sgc/ansible/roles/pds-ar/` — the ansible role that deploys each PDS instance
-- `~/sgc/ansible/roles/sgc-pds-admin-ar/` (planned) — the ansible role that deploys this admin app
+- `~/sgc/ansible/roles/pds-pro-ar/` (planned) — the ansible role that deploys this admin app
 
 The PDS admin password never reaches the browser. The auth boundary is *this app* — it authenticates the human via OAuth, decides if they're allowed (allowlist for now, claim-based later), then runs `goat pds admin` server-side with the shared admin secret on their behalf, writing an audit log entry per action.
 
@@ -25,7 +25,7 @@ The PDS admin password never reaches the browser. The auth boundary is *this app
 ## Layout
 
 ```
-cmd/sgc-pds-admin/    # entrypoint
+cmd/pds-pro/    # entrypoint
 internal/
   audit/              # JSON-lines audit logger (sync.Mutex-guarded file append)
   auth/
@@ -51,7 +51,7 @@ Dockerfile            # multi-stage: builds the app + builds goat from source pi
 | 4 | Add Google + Microsoft providers |
 | 5 | Add Facebook + X providers |
 | 6 | SQLite audit log + CSV export, role management UI, instance picker |
-| 7 | `sgc-pds-admin-ar` ansible role + wire into SGC playbook |
+| 7 | `pds-pro-ar` ansible role + wire into SGC playbook |
 
 ## Auth model
 

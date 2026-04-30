@@ -1,4 +1,4 @@
-# sgc-pds-admin
+# PDS-Pro
 
 A small web admin UX that wraps `goat pds admin` with operator-level OAuth, so SGC operators can manage one or more Bluesky PDS instances without ever touching the shared `PDS_ADMIN_PASSWORD` directly.
 
@@ -9,7 +9,7 @@ A small web admin UX that wraps `goat pds admin` with operator-level OAuth, so S
 - Server-rendered HTML + htmx. No SPA build.
 - `goat` is shelled out per request; the admin password is loaded from a per-instance secret file and passed via `--admin-password` so we never touch the hardcoded `/pds/pds.env` lookup.
 
-This is part of the SGC PDS work — see [`P3X-118/pds`](https://github.com/P3X-118/pds) for the PDS distribution fork and [`sgc-pds-admin-ar`](https://github.com/P3X-118/sgc-pds-admin-ar) for the ansible role that deploys this app.
+This is part of the SGC PDS work — see [`P3X-118/pds`](https://github.com/P3X-118/pds) for the PDS distribution fork and [`pds-pro-ar`](https://github.com/P3X-118/pds-pro-ar) for the ansible role that deploys this app.
 
 ## Phase 2 scope (this commit)
 
@@ -22,7 +22,7 @@ Future phases add `account info/update/reset-password/delete`, `blob status/purg
 ## Layout
 
 ```
-cmd/sgc-pds-admin/      # entrypoint
+cmd/pds-pro/      # entrypoint
 internal/
   audit/                # JSON-lines audit log
   auth/                 # goth OAuth, gorilla/sessions, allowlist
@@ -47,17 +47,17 @@ Secrets live in files (per the SGC pattern, derived from `sgc_pgsk` in the deplo
 ## Run locally
 
 ```bash
-go run ./cmd/sgc-pds-admin --config ./config.yaml --templates ./web/templates
+go run ./cmd/pds-pro --config ./config.yaml --templates ./web/templates
 ```
 
 ## Build the container
 
 ```bash
-docker build -t sgc-pds-admin:dev .
+docker build -t pds-pro:dev .
 docker run --rm -p 8080:8080 \
-  -v $(pwd)/config.yaml:/etc/sgc-pds-admin/config.yaml:ro \
-  -v $(pwd)/secrets:/run/secrets/sgc-pds-admin:ro \
-  sgc-pds-admin:dev
+  -v $(pwd)/config.yaml:/etc/pds-pro/config.yaml:ro \
+  -v $(pwd)/secrets:/run/secrets/pds-pro:ro \
+  pds-pro:dev
 ```
 
 The runtime image bundles `goat` so the admin app can shell out to `/usr/local/bin/goat` directly. Pin the goat version with `--build-arg GOAT_VERSION=vX.Y.Z`.

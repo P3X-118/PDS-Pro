@@ -1,4 +1,4 @@
-module github.com/P3X-118/sgc-pds-admin
+module github.com/P3X-118/pds-pro
 
 go 1.24.2
 

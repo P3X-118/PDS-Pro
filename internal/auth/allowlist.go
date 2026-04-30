@@ -3,7 +3,7 @@ package auth
 import (
 	"strings"
 
-	"github.com/P3X-118/sgc-pds-admin/internal/config"
+	"github.com/P3X-118/pds-pro/internal/config"
 )
 
 type Decision struct {

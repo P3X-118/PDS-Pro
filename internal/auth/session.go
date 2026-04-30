@@ -16,7 +16,7 @@ func init() {
 	gob.Register([]string{})
 }
 
-const sessionName = "sgc-pds-admin"
+const sessionName = "pds-pro"
 
 type sessionUserKey struct{}
 

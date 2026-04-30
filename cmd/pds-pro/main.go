@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/P3X-118/sgc-pds-admin/internal/audit"
-	"github.com/P3X-118/sgc-pds-admin/internal/auth"
-	"github.com/P3X-118/sgc-pds-admin/internal/config"
-	"github.com/P3X-118/sgc-pds-admin/internal/handlers"
+	"github.com/P3X-118/pds-pro/internal/audit"
+	"github.com/P3X-118/pds-pro/internal/auth"
+	"github.com/P3X-118/pds-pro/internal/config"
+	"github.com/P3X-118/pds-pro/internal/handlers"
 )
 
 func main() {

@@ -5,7 +5,7 @@ session:
   # 32+ byte hex string. If the file doesn't exist, the app will create one
   # with a random 32-byte secret on first start (mode 0600). Persist this
   # across restarts, otherwise sessions are invalidated on every boot.
-  secret_file: "/var/lib/sgc-pds-admin/session-secret"
+  secret_file: "/var/lib/pds-pro/session-secret"
   secure: true
   max_age_sec: 86400
 
@@ -14,7 +14,7 @@ oauth:
     org_url: "https://example.okta.com"
     client_id: "0oaXXXXXXXXXXXXXX"
     # File contents = the Okta client secret (single line, no quotes)
-    client_secret_file: "/run/secrets/sgc-pds-admin/okta-client-secret"
+    client_secret_file: "/run/secrets/pds-pro/okta-client-secret"
     callback_url: "https://admin.pds.example.com/auth/okta/callback"
 
 # Operators allowed to access the app. First match wins.
@@ -30,19 +30,19 @@ allowlist:
 
 # PDS instances this admin app can manage. Each instance's admin password
 # must live in its own file readable by the app (mode 0640, owned by the
-# sgc-pds-admin user).
+# pds-pro user).
 instances:
   - name: "pds-foo"
     pds_host: "https://pds-foo.example.com"
-    admin_password_file: "/run/secrets/sgc-pds-admin/pds-foo-admin-password"
+    admin_password_file: "/run/secrets/pds-pro/pds-foo-admin-password"
   - name: "pds-bar"
     pds_host: "https://pds-bar.example.com"
-    admin_password_file: "/run/secrets/sgc-pds-admin/pds-bar-admin-password"
+    admin_password_file: "/run/secrets/pds-pro/pds-bar-admin-password"
 
 audit:
   # JSON-lines audit log. One entry per admin action (and per login attempt).
   # Empty / unset = stdout.
-  log_path: "/var/log/sgc-pds-admin/audit.log"
+  log_path: "/var/log/pds-pro/audit.log"
 
 goat:
   # Path to the goat binary inside the container. The Dockerfile installs
