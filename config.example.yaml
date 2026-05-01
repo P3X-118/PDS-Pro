@@ -71,9 +71,13 @@ instances:
     admin_password_file: "/run/secrets/pds-pro/pds-bar-admin-password"
 
 audit:
-  # JSON-lines audit log. One entry per admin action (and per login attempt).
-  # Empty / unset = stdout.
-  log_path: "/var/log/pds-pro/audit.log"
+  # SQLite database. Required for the /audit query UI and CSV export.
+  # The schema is created on first run.
+  db_path: "/var/lib/pds-pro/audit.db"
+
+  # Fallback JSON-lines file. Only used if db_path is empty. Empty/unset on
+  # both = stdout. One entry per admin action and per login attempt.
+  # log_path: "/var/log/pds-pro/audit.log"
 
 goat:
   # Path to the goat binary inside the container. The Dockerfile installs

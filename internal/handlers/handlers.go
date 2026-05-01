@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	htmltemplate "html/template"
@@ -26,11 +27,11 @@ type Server struct {
 	cfg       *config.Config
 	tpl       Templates
 	sessions  *auth.Manager
-	audit     *audit.Logger
+	audit     audit.Logger
 	providers []string
 }
 
-func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al *audit.Logger, providers []string) *Server {
+func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al audit.Logger, providers []string) *Server {
 	return &Server{cfg: cfg, tpl: tpl, sessions: sm, audit: al, providers: providers}
 }
 
@@ -61,6 +62,9 @@ func (s *Server) Routes() http.Handler {
 		r.Post("/instances/{instance}/blob/purge", s.blobPurge)
 		r.Get("/instances/{instance}/crawl", s.crawlForm)
 		r.Post("/instances/{instance}/crawl", s.crawlRequest)
+		r.Get("/me", s.me)
+		r.Get("/audit", s.auditList)
+		r.Get("/audit.csv", s.auditCSV)
 	})
 
 	return r
@@ -596,6 +600,109 @@ func (s *Server) crawlRequest(w http.ResponseWriter, r *http.Request) {
 		"Relay":    relay,
 		"Hostname": hostname,
 	})
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	s.render(w, "me.html", map[string]any{
+		"User":      u,
+		"Instances": s.cfg.Instances,
+		"Providers": s.providers,
+	})
+}
+
+func (s *Server) auditList(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	q, ok := s.audit.(audit.Querier)
+	if !ok {
+		s.render(w, "audit_unavailable.html", map[string]any{"User": u})
+		return
+	}
+	filter := parseAuditFilter(r)
+	entries, err := q.ListEntries(r.Context(), filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "audit.html", map[string]any{
+		"User":        u,
+		"Entries":     entries,
+		"Filter":      filter,
+		"Instances":   s.cfg.Instances,
+		"QueryString": r.URL.RawQuery,
+	})
+}
+
+func (s *Server) auditCSV(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFromContext(r.Context())
+	q, ok := s.audit.(audit.Querier)
+	if !ok {
+		http.Error(w, "audit query backend not enabled (set audit.db_path in config)", http.StatusNotImplemented)
+		return
+	}
+	filter := parseAuditFilter(r)
+	if filter.Limit <= 0 {
+		filter.Limit = 100000
+	}
+	entries, err := q.ListEntries(r.Context(), filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.audit.Log(audit.Entry{
+		Subject: u.Subject, Email: u.Email, Provider: u.Provider,
+		Action: "audit.export", Result: "ok",
+		Args: map[string]string{"rows": strconv.Itoa(len(entries))},
+	})
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="audit.csv"`)
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"ts", "subject", "email", "provider", "instance", "action", "args", "result", "http_status", "error"})
+	for _, e := range entries {
+		argsJSON := ""
+		if len(e.Args) > 0 {
+			b, _ := json.Marshal(e.Args)
+			argsJSON = string(b)
+		}
+		httpStatus := ""
+		if e.HTTPStatus != 0 {
+			httpStatus = strconv.Itoa(e.HTTPStatus)
+		}
+		_ = cw.Write([]string{
+			e.TS.UTC().Format(time.RFC3339),
+			e.Subject, e.Email, e.Provider, e.Instance, e.Action,
+			argsJSON, e.Result, httpStatus, e.Error,
+		})
+	}
+	cw.Flush()
+}
+
+func parseAuditFilter(r *http.Request) audit.Filter {
+	q := r.URL.Query()
+	f := audit.Filter{
+		Subject:  q.Get("subject"),
+		Action:   q.Get("action"),
+		Instance: q.Get("instance"),
+		Result:   q.Get("result"),
+		Limit:    atoiOr(q.Get("limit"), 200),
+	}
+	if s := q.Get("since"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			f.Since = t
+		} else if t, err := time.Parse("2006-01-02", s); err == nil {
+			f.Since = t
+		}
+	}
+	if s := q.Get("until"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			f.Until = t
+		} else if t, err := time.Parse("2006-01-02", s); err == nil {
+			f.Until = t.Add(24 * time.Hour)
+		}
+	}
+	return f
 }
 
 func resultPair(err error) (string, string) {

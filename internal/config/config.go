@@ -60,6 +60,10 @@ type PDSInstance struct {
 }
 
 type AuditConfig struct {
+	// Preferred: SQLite database. Enables the /audit and /audit.csv views.
+	DBPath string `yaml:"db_path"`
+	// Fallback: append-only JSON-lines file. If both paths are empty, audit
+	// entries go to stdout. If db_path is set, log_path is ignored.
 	LogPath string `yaml:"log_path"`
 }
 

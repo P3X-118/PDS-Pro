@@ -1,0 +1,53 @@
+{{define "content"}}
+<h2>Audit log</h2>
+<form method="get" action="/audit" style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem">
+  <label>Subject<br><input name="subject" value="{{.Filter.Subject}}" autocomplete="off"></label>
+  <label>Action<br><input name="action" value="{{.Filter.Action}}" autocomplete="off" placeholder="account.create"></label>
+  <label>Instance<br>
+    <select name="instance">
+      <option value="">(any)</option>
+      {{range .Instances}}<option value="{{.Name}}"{{if eq $.Filter.Instance .Name}} selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+  </label>
+  <label>Result<br>
+    <select name="result">
+      <option value="">(any)</option>
+      <option value="ok"{{if eq .Filter.Result "ok"}} selected{{end}}>ok</option>
+      <option value="error"{{if eq .Filter.Result "error"}} selected{{end}}>error</option>
+      <option value="denied"{{if eq .Filter.Result "denied"}} selected{{end}}>denied</option>
+    </select>
+  </label>
+  <label>Since (YYYY-MM-DD)<br><input name="since" value="{{if not .Filter.Since.IsZero}}{{.Filter.Since.Format "2006-01-02"}}{{end}}"></label>
+  <label>Until (YYYY-MM-DD)<br><input name="until" value="{{if not .Filter.Until.IsZero}}{{.Filter.Until.Format "2006-01-02"}}{{end}}"></label>
+  <label>Limit<br><input name="limit" type="number" min="1" max="10000" value="{{.Filter.Limit}}"></label>
+  <button type="submit">Filter</button>
+  <a href="/audit.csv?{{.QueryString}}"><button type="button">CSV</button></a>
+</form>
+
+{{if .Entries}}
+<table>
+  <thead>
+    <tr>
+      <th>Time (UTC)</th><th>Subject</th><th>Provider</th><th>Instance</th>
+      <th>Action</th><th>Result</th><th>Args</th><th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Entries}}
+    <tr>
+      <td>{{.TS.UTC.Format "2006-01-02 15:04:05"}}</td>
+      <td><code>{{.Subject}}</code></td>
+      <td>{{.Provider}}</td>
+      <td>{{.Instance}}</td>
+      <td><code>{{.Action}}</code></td>
+      <td{{if eq .Result "error"}} class="danger"{{end}}>{{.Result}}</td>
+      <td>{{range $k, $v := .Args}}<code>{{$k}}={{$v}}</code> {{end}}</td>
+      <td class="danger">{{.Error}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No entries match.</p>
+{{end}}
+{{end}}

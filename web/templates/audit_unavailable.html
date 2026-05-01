@@ -1,0 +1,10 @@
+{{define "content"}}
+<h2>Audit log</h2>
+<p>The audit log query view requires the SQLite backend. The current
+configuration uses the JSON-lines file backend.</p>
+<p>To enable querying, set <code>audit.db_path</code> in <code>config.yaml</code>:</p>
+<pre>audit:
+  db_path: "/var/lib/pds-pro/audit.db"</pre>
+<p class="muted">The file backend continues to work; you just can't query it
+from this UI. Tail the JSON-lines file with <code>jq</code> instead.</p>
+{{end}}

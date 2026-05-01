@@ -35,7 +35,7 @@ func main() {
 		log.Fatalf("oauth: %v", err)
 	}
 
-	al, err := audit.New(cfg.Audit.LogPath)
+	al, err := audit.New(cfg.Audit.DBPath, cfg.Audit.LogPath)
 	if err != nil {
 		log.Fatalf("audit: %v", err)
 	}
