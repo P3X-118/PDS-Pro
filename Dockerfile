@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,7 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/pds-pro ./cmd/pds-pro
 
 # Build goat alongside so the runtime image has both binaries available.
-FROM golang:1.24-alpine AS goat-build
+FROM golang:1.25-alpine AS goat-build
 RUN apk add --no-cache git
 ARG GOAT_VERSION=v0.2.3
 WORKDIR /src
