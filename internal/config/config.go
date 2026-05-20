@@ -25,11 +25,24 @@ type SessionConfig struct {
 }
 
 type OAuthConfig struct {
+	OIDC      *OIDCProvider    `yaml:"oidc,omitempty"`
 	Okta      *OktaProvider    `yaml:"okta,omitempty"`
 	Google    *GenericProvider `yaml:"google,omitempty"`
 	Microsoft *GenericProvider `yaml:"microsoft,omitempty"`
 	Facebook  *GenericProvider `yaml:"facebook,omitempty"`
 	Twitter   *GenericProvider `yaml:"twitter,omitempty"`
+}
+
+// OIDCProvider is a generic OpenID Connect provider. Unlike the vendor
+// providers above, endpoints are resolved at startup via OIDC discovery
+// (issuer_url + "/.well-known/openid-configuration"), so any compliant IdP
+// (e.g. self-hosted Authentik) works without vendor-specific URL schemes.
+type OIDCProvider struct {
+	IssuerURL        string   `yaml:"issuer_url"`
+	ClientID         string   `yaml:"client_id"`
+	ClientSecretFile string   `yaml:"client_secret_file"`
+	CallbackURL      string   `yaml:"callback_url"`
+	Scopes           []string `yaml:"scopes,omitempty"`
 }
 
 type OktaProvider struct {
@@ -51,6 +64,10 @@ type AllowEntry struct {
 	Email       string   `yaml:"email,omitempty"`
 	EmailDomain string   `yaml:"email_domain,omitempty"`
 	Roles       []string `yaml:"roles"`
+	// Instances this identity may manage. Ignored for the "super-admin"
+	// role (which sees every instance). For non-super entries an empty
+	// list means the identity can manage NO instances (deny by default).
+	Instances []string `yaml:"instances,omitempty"`
 }
 
 type PDSInstance struct {
@@ -89,7 +106,7 @@ func Load(path string) (*Config, error) {
 	if c.Goat.BinaryPath == "" {
 		c.Goat.BinaryPath = "goat"
 	}
-	if c.OAuth.Okta == nil && c.OAuth.Google == nil && c.OAuth.Microsoft == nil && c.OAuth.Facebook == nil && c.OAuth.Twitter == nil {
+	if c.OAuth.OIDC == nil && c.OAuth.Okta == nil && c.OAuth.Google == nil && c.OAuth.Microsoft == nil && c.OAuth.Facebook == nil && c.OAuth.Twitter == nil {
 		return nil, fmt.Errorf("at least one OAuth provider must be configured")
 	}
 	if len(c.Instances) == 0 {

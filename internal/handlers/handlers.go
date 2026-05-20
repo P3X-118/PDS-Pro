@@ -122,9 +122,10 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 		Subject:  subject,
 		Email:    gu.Email,
 		Name:     fullName(gu),
-		Provider: provider,
-		Roles:    decision.Roles,
-		IssuedAt: time.Now().UTC(),
+		Provider:  provider,
+		Roles:     decision.Roles,
+		Instances: decision.Instances,
+		IssuedAt:  time.Now().UTC(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -146,9 +147,15 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFromContext(r.Context())
+	visible := make([]config.PDSInstance, 0, len(s.cfg.Instances))
+	for _, in := range s.cfg.Instances {
+		if auth.CanAccessInstance(u.Roles, u.Instances, in.Name) {
+			visible = append(visible, in)
+		}
+	}
 	s.render(w, "home.html", map[string]any{
 		"User":      u,
-		"Instances": s.cfg.Instances,
+		"Instances": visible,
 	})
 }
 
@@ -158,6 +165,10 @@ func (s *Server) accountList(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
@@ -195,6 +206,10 @@ func (s *Server) accountNewForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	s.render(w, "account_new.html", map[string]any{"User": u, "Instance": inst})
 }
 
@@ -208,6 +223,10 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -265,6 +284,10 @@ func (s *Server) accountTakedown(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	user := chi.URLParam(r, "user")
 	reverse := r.URL.Query().Get("reverse") == "1"
 	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
@@ -301,6 +324,10 @@ func (s *Server) accountInfo(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	user := chi.URLParam(r, "user")
@@ -341,6 +368,10 @@ func (s *Server) accountResetPassword(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	user := chi.URLParam(r, "user")
 	cli, err := goat.NewClient(s.cfg.Goat.BinaryPath, inst)
 	if err != nil {
@@ -378,6 +409,10 @@ func (s *Server) accountDelete(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	user := chi.URLParam(r, "user")
 	if r.FormValue("confirm") != user {
 		http.Error(w, "confirmation did not match account", http.StatusBadRequest)
@@ -412,6 +447,10 @@ func (s *Server) accountUpdate(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	user := chi.URLParam(r, "user")
@@ -460,6 +499,10 @@ func (s *Server) invitesForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	s.render(w, "invites.html", map[string]any{"User": u, "Instance": inst})
 }
 
@@ -473,6 +516,10 @@ func (s *Server) invitesCreate(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	count := atoiOr(r.FormValue("count"), 1)
@@ -509,6 +556,10 @@ func (s *Server) blobForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	s.render(w, "blob.html", map[string]any{"User": u, "Instance": inst})
 }
 
@@ -522,6 +573,10 @@ func (s *Server) blobPurge(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	user := strings.TrimSpace(r.FormValue("user"))
@@ -562,6 +617,10 @@ func (s *Server) crawlForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	s.render(w, "crawl.html", map[string]any{"User": u, "Instance": inst})
 }
 
@@ -575,6 +634,10 @@ func (s *Server) crawlRequest(w http.ResponseWriter, r *http.Request) {
 	inst := s.cfg.Instance(instName)
 	if inst == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if !auth.CanAccessInstance(u.Roles, u.Instances, instName) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	relay := strings.TrimSpace(r.FormValue("relay"))

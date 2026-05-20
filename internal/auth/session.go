@@ -24,9 +24,10 @@ type SessionUser struct {
 	Subject  string
 	Email    string
 	Name     string
-	Provider string
-	Roles    []string
-	IssuedAt time.Time
+	Provider  string
+	Roles     []string
+	Instances []string
+	IssuedAt  time.Time
 }
 
 type Manager struct {
@@ -58,6 +59,7 @@ func (m *Manager) Save(w http.ResponseWriter, r *http.Request, u SessionUser) er
 	s.Values["name"] = u.Name
 	s.Values["provider"] = u.Provider
 	s.Values["roles"] = u.Roles
+	s.Values["instances"] = u.Instances
 	s.Values["issued_at"] = u.IssuedAt.Unix()
 	return s.Save(r, w)
 }
@@ -72,14 +74,16 @@ func (m *Manager) Get(r *http.Request) (*SessionUser, bool) {
 	name, _ := s.Values["name"].(string)
 	provider, _ := s.Values["provider"].(string)
 	roles, _ := s.Values["roles"].([]string)
+	instances, _ := s.Values["instances"].([]string)
 	issued, _ := s.Values["issued_at"].(int64)
 	return &SessionUser{
-		Subject:  sub,
-		Email:    email,
-		Name:     name,
-		Provider: provider,
-		Roles:    roles,
-		IssuedAt: time.Unix(issued, 0),
+		Subject:   sub,
+		Email:     email,
+		Name:      name,
+		Provider:  provider,
+		Roles:     roles,
+		Instances: instances,
+		IssuedAt:  time.Unix(issued, 0),
 	}, true
 }
 

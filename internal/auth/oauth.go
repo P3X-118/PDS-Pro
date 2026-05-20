@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/P3X-118/pds-pro/internal/config"
 	"github.com/markbates/goth"
@@ -10,6 +11,7 @@ import (
 	"github.com/markbates/goth/providers/google"
 	"github.com/markbates/goth/providers/microsoftonline"
 	"github.com/markbates/goth/providers/okta"
+	"github.com/markbates/goth/providers/openidConnect"
 	"github.com/markbates/goth/providers/twitterv2"
 )
 
@@ -21,6 +23,32 @@ func RegisterProviders(cfg *config.Config, sm *Manager) ([]string, error) {
 
 	var enabled []string
 	var providers []goth.Provider
+
+	if o := cfg.OAuth.OIDC; o != nil {
+		if o.ClientID == "" || o.IssuerURL == "" || o.CallbackURL == "" {
+			return nil, fmt.Errorf("oidc provider requires client_id, issuer_url, callback_url")
+		}
+		secret, err := config.ReadSecretFile(o.ClientSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("oidc secret: %w", err)
+		}
+		scopes := o.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "profile", "email"}
+		}
+		discovery := strings.TrimRight(o.IssuerURL, "/") + "/.well-known/openid-configuration"
+		p, err := openidConnect.New(o.ClientID, secret, o.CallbackURL, discovery, scopes...)
+		if err != nil {
+			return nil, fmt.Errorf("oidc provider (discovery %s): %w", discovery, err)
+		}
+		// goth's openidConnect.New names the provider "openid-connect" and
+		// NewNamed("oidc") would mangle it to "oidc-oidc"; force the exact
+		// name so gothic routes /auth/oidc[/callback] and the allowlist
+		// subject is "oidc|<sub>".
+		p.SetName("oidc")
+		providers = append(providers, p)
+		enabled = append(enabled, "oidc")
+	}
 
 	if o := cfg.OAuth.Okta; o != nil {
 		secret, err := config.ReadSecretFile(o.ClientSecretFile)
