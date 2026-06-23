@@ -1,0 +1,24 @@
+{{define "content"}}
+{{if eq .Status "active"}}
+  <h2>You're all set</h2>
+  <p>Your Bluesky account is ready and linked to your cooey identity.</p>
+  <table>
+    <tr><th>Handle</th><td>{{.Handle}}</td></tr>
+    <tr><th>DID</th><td>{{.DID}}</td></tr>
+  </table>
+  {{if .AppPassword}}
+    <h3>App password</h3>
+    <p>Use this to sign in to the Bluesky app (or any atproto client) as
+       <code>{{.Handle}}</code>. <strong>Copy it now — it won't be shown again.</strong></p>
+    <pre>{{.AppPassword}}</pre>
+    <p class="muted">Inside cooey/chat you stay signed in automatically; you only need this for external apps.</p>
+  {{end}}
+{{else}}
+  <h2>Something went wrong</h2>
+  <p class="danger">
+    We couldn't finish creating <code>{{.Handle}}</code> just now. Our team has
+    been alerted and it will be retried automatically — no action needed from you.
+  </p>
+  {{if .Error}}<p class="muted">Details: {{.Error}}</p>{{end}}
+{{end}}
+{{end}}

@@ -3,14 +3,31 @@
 <h2>New account on {{.Instance.Name}}</h2>
 <form class="stacked" method="post" action="/instances/{{.Instance.Name}}/accounts">
   <label>Handle (e.g. alice.example.com)
-    <input name="handle" required autocomplete="off">
+    <input id="handle" name="handle" required autocomplete="off">
   </label>
-  <label>Email
-    <input name="email" type="email" required autocomplete="off">
+  <label>Email (leave blank to use &lt;handle&gt; with the first dot as @, e.g. mike.eagledrive.live &rarr; mike@eagledrive.live)
+    <input id="email" name="email" type="email" autocomplete="off">
   </label>
   <label>Password (leave blank to auto-generate)
     <input name="password" type="text" autocomplete="off">
   </label>
   <button type="submit">Create</button>
 </form>
+<script>
+  // Auto-fill the email from the handle (handle is an atproto hostname; the
+  // account email defaults to the same domain). Stops once the operator edits
+  // the email themselves. The server applies the same derivation if left blank.
+  (function () {
+    var handle = document.getElementById("handle");
+    var email = document.getElementById("email");
+    var edited = false;
+    email.addEventListener("input", function () { edited = true; });
+    handle.addEventListener("input", function () {
+      if (edited) return;
+      var h = handle.value.trim().replace(/^@/, "");
+      var i = h.indexOf(".");
+      email.value = (i > 0 && i < h.length - 1) ? h.slice(0, i) + "@" + h.slice(i + 1) : "";
+    });
+  })();
+</script>
 {{end}}

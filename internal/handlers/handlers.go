@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/P3X-118/pds-pro/internal/auth"
 	"github.com/P3X-118/pds-pro/internal/config"
 	"github.com/P3X-118/pds-pro/internal/goat"
+	"github.com/P3X-118/pds-pro/internal/linkage"
 	"github.com/go-chi/chi/v5"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
@@ -29,10 +31,16 @@ type Server struct {
 	sessions  *auth.Manager
 	audit     audit.Logger
 	providers []string
+	// link is the atproto cross-auth service; nil when federation is not
+	// configured. The claim/broker routes and the provisioning webhook use it.
+	link *linkage.Service
+	// hookSecret authenticates the Authentik user-creation webhook; empty
+	// disables the /hooks/authentik endpoint.
+	hookSecret string
 }
 
-func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al audit.Logger, providers []string) *Server {
-	return &Server{cfg: cfg, tpl: tpl, sessions: sm, audit: al, providers: providers}
+func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al audit.Logger, providers []string, link *linkage.Service, hookSecret string) *Server {
+	return &Server{cfg: cfg, tpl: tpl, sessions: sm, audit: al, providers: providers, link: link, hookSecret: hookSecret}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -44,6 +52,25 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/auth/{provider}", s.authStart)
 	r.Get("/auth/{provider}/callback", s.authCallback)
 	r.Post("/logout", s.logout)
+
+	// End-user atproto claim flow (cross-auth federation). Public entry; the
+	// claim itself authenticates the end user via the cooey-brand "claim" OIDC
+	// provider (NOT the operator allowlist). Paths avoid the /auth/{provider}
+	// operator routes above. Mounted only when federation + claim are configured.
+	if s.claimEnabled() {
+		r.Get("/claim", s.claimForm)
+		r.Get("/claim/auth", s.claimAuthStart)
+		r.Get("/claim/callback", s.claimCallback)
+	}
+
+	// Authentik notification webhook: fired on user-creation (any source —
+	// Discord login, chat SSO, the claim flow) to nudge a real-time provisioning
+	// sweep. The body is ignored; it is a dumb authenticated "go check" kick, so
+	// it is robust to Authentik's notification payload shape. The periodic sweep
+	// is the backstop. Mounted only when a hook secret is configured.
+	if s.link != nil && s.hookSecret != "" {
+		r.Post("/hooks/authentik", s.authentikHook)
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.sessions.Middleware)
@@ -119,9 +146,9 @@ func (s *Server) authCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.sessions.Save(w, r, auth.SessionUser{
-		Subject:  subject,
-		Email:    gu.Email,
-		Name:     fullName(gu),
+		Subject:   subject,
+		Email:     gu.Email,
+		Name:      fullName(gu),
 		Provider:  provider,
 		Roles:     decision.Roles,
 		Instances: decision.Instances,
@@ -233,8 +260,15 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	handle := r.FormValue("handle")
-	email := r.FormValue("email")
+	handle := strings.TrimSpace(r.FormValue("handle"))
+	email := strings.TrimSpace(r.FormValue("email"))
+	if email == "" {
+		// Convention: derive the account email from the handle's domain, e.g.
+		// handle "mike.eagledrive.live" -> email "mike@eagledrive.live". The
+		// handle is the atproto identity (a hostname); the email is a separate
+		// field, but by default it should live on the same domain as the user.
+		email = deriveEmailFromHandle(handle)
+	}
 	password := r.FormValue("password")
 	if password == "" {
 		password = randomPassword()
@@ -818,4 +852,117 @@ func randomPassword() string {
 	b := make([]byte, 18)
 	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// deriveEmailFromHandle turns an atproto handle into the convention account
+// email by replacing the first dot with "@": "mike.eagledrive.live" ->
+// "mike@eagledrive.live". Returns "" if the handle has no usable domain part
+// (caller then falls back to whatever was submitted, and goat validates).
+func deriveEmailFromHandle(handle string) string {
+	h := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(handle), "@"))
+	i := strings.IndexByte(h, '.')
+	if i <= 0 || i >= len(h)-1 {
+		return ""
+	}
+	return h[:i] + "@" + h[i+1:]
+}
+
+// ---- end-user atproto claim flow (cross-auth federation) -------------------
+
+func (s *Server) claimEnabled() bool {
+	return s.link != nil && s.cfg.Atproto != nil && s.cfg.Atproto.Claim != nil
+}
+
+// claimForm shows the public "pick a handle" page.
+func (s *Server) claimForm(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "claim.html", map[string]any{"HandleDomain": s.cfg.Atproto.HandleDomain})
+}
+
+func (s *Server) claimAuthStart(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	q.Set("provider", "claim")
+	r.URL.RawQuery = q.Encode()
+	gothic.BeginAuthHandler(w, r)
+}
+
+// claimCallback completes the OIDC round-trip and provisions+links the account.
+// The handle localpart IS the user's chat/Authentik username — chat shows
+// <user>, bsky shows <user>.cooey.club (one identity), so there is no separate
+// handle pick. Provisioning is non-blocking: even on failure the user was
+// already flagged + alerted, so we render the outcome rather than erroring out.
+func (s *Server) claimCallback(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	q.Set("provider", "claim")
+	r.URL.RawQuery = q.Encode()
+
+	gu, err := gothic.CompleteUserAuth(w, r)
+	if err != nil {
+		http.Error(w, "auth failed: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	username, _ := gu.RawData["preferred_username"].(string)
+	if username == "" {
+		username = gu.NickName
+	}
+	res, perr := s.link.ProvisionAndLink(r.Context(), linkage.ClaimInput{
+		Sub:       gu.UserID,
+		Username:  username,
+		Email:     gu.Email,
+		Localpart: username,
+	})
+	appPassword := ""
+	if perr == nil && res.Status == "active" {
+		// Best-effort: hand the user an app-password for external Bluesky apps.
+		// A failure here does not undo the (successful) claim.
+		appPassword, _ = s.link.IssueAppPassword(r.Context(), res.Handle, "cooey")
+	}
+	s.render(w, "claim_done.html", map[string]any{
+		"Handle":      res.Handle,
+		"DID":         res.DID,
+		"Status":      res.Status,
+		"Error":       errString(perr),
+		"AppPassword": appPassword,
+	})
+}
+
+func errString(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// authentikHook is the Authentik user-creation webhook. It authenticates the
+// caller and kicks an idempotent provisioning sweep, then returns immediately —
+// the sweep runs in the background loop. The request body is intentionally
+// ignored (see the route comment).
+func (s *Server) authentikHook(w http.ResponseWriter, r *http.Request) {
+	if !s.hookAuthorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.link.Kick()
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte("queued"))
+}
+
+// hookAuthorized accepts the shared secret either as a bearer token or a ?token=
+// query param (Authentik's webhook transport can carry it whichever way the
+// deployed version supports). Constant-time compared.
+func (s *Server) hookAuthorized(r *http.Request) bool {
+	want := []byte(s.hookSecret)
+	if want == nil || len(want) == 0 {
+		return false
+	}
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		if subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, "Bearer ")), want) == 1 {
+			return true
+		}
+	}
+	if t := r.URL.Query().Get("token"); t != "" {
+		if subtle.ConstantTimeCompare([]byte(t), want) == 1 {
+			return true
+		}
+	}
+	return false
 }

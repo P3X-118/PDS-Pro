@@ -104,3 +104,73 @@ Log on every state-changing action (create, takedown, etc.) AND on login attempt
 - Don't bypass the `RequireAuth` middleware for state-changing routes.
 - Don't `gob.Register` new types in handlers — register in `auth/session.go`'s `init()` so it's all in one place.
 - Don't add features for hypothetical future providers/operations. Phase plan above is the source of truth for what to build next.
+
+## Cross-auth federation (atproto ↔ Authentik) — the "session-broker" model
+
+Beyond per-instance operator admin, pds-pro is the **management plane** for the
+Discord → Authentik → Stoked-chat + Bluesky cross-auth on cooey.club. Goal: one
+identity — sign in with Discord (a source on the cooey Authentik brand), become a
+durable Authentik user, and be associated with both a Stoked chat user and a
+`<handle>.cooey.club` atproto account. Canonical design + decisions: pds-pro
+project memory `crossauth-atproto-federation.md`.
+
+**Why session-broker (not PDS-OAuth federation):** atproto's
+`@atproto/oauth-provider` (the PDS login) has no external-IdP hook, and patching
+it is a deep, fragile change to a weekly-bumped dep. Instead pds-pro creates each
+account with a **managed password it can re-derive** —
+`HMAC(secret, "atproto:session:"+sub)` — so it can mint atproto sessions /
+app-passwords on the user's behalf ("one Authentik login → bsky") without
+touching the PDS.
+
+**Config:** optional `authentik` + `ntfy` + `atproto` blocks (see
+config.example.yaml). `atproto.instance` must be a configured PDS instance;
+`atproto.claim` is the end-user OIDC client. Federation is off unless `atproto`
+is set; `config.Load` validates the dependent blocks when it is.
+
+**Two auth audiences in one app:**
+- **Operators** — `/` + `/instances/*`, OIDC + allowlist (existing).
+- **End users** — the `/claim` flow: a SEPARATE goth provider `claim` pointed at
+  the cooey brand (`auth.cooey.club`), **not allowlist-gated**, so any cooey user
+  can claim. Flow: `GET /claim` (form) → `POST /claim` (stash localpart in a
+  10-min `pds-pro-claim` cookie) → `GET /claim/auth` (gothic begin) → Authentik →
+  `GET /claim/callback` (gothic complete → `linkage.ProvisionAndLink`). The
+  `/claim/*` paths deliberately avoid the operator `/auth/{provider}` routes;
+  `claim.callback_url` MUST be `<base_url>/claim/callback`. The `claim` provider
+  is registered with goth but never added to the operator login buttons.
+
+**Provisioning + linkage (`internal/linkage`, `internal/authentik`):**
+`ProvisionAndLink` creates `<localpart>.<handle_domain>` via goat, then PATCHes
+`attributes.atproto = {did,handle,status:"active"}` onto the Authentik user
+(read-modify-write so other attributes survive). **Failure is non-blocking:**
+flag `status:"error"` (carrying the OIDC sub + any did), ntfy the eagledrive-admin
+topic, audit — never block the user. A 10-minute `reconcileLoop`
+(cmd/pds-pro/main.go) retries flagged users quietly (relink if a did is present,
+else re-create).
+
+**Authentik side** (`apps/authentik/scripts/sgc/`):
+`provision-atproto-claims.py` (the `atproto` OIDC scope → atproto_did/handle/status
+claims, attached to `stoked`, for chat to read) + `provision-atproto-writer-token.py`
+(the writer service account + token). A provision script for the `pds-pro-claim`
+OIDC client is a Phase-5 TODO.
+
+**Session broker (built, `internal/atproto` + `linkage`):** `IssueAppPassword`
+and `BrokerSession` re-derive the managed password and call
+`com.atproto.server.createSession` / `createAppPassword` against the instance's
+PDS host. The claim callback mints + shows a `cooey` app-password on success (for
+external Bluesky apps); `BrokerSession` is ready for chat to embed bsky via a
+brokered session.
+
+**Naming — drop the service prefix:** the PDS host carries a prefix
+(`pds.<domain>`, or `bsky.<domain>` colloquially), but everything user-facing is
+the BARE `<user>.cooey.club` — never `<user>.pds.cooey.club`. `atproto.handle_domain`
+is the explicit bare domain (separate from the prefixed `pds_host`), so handles +
+emails already drop the prefix. **Stoked:** the chat username is just `<user>` (the localpart = the Authentik
+`preferred_username`); `<user>.cooey.club` is ONLY the bsky handle format. So no
+chat-username construction is needed — the claim's handle localpart IS that same
+`<user>` (chat `<user>` ↔ bsky `<user>.cooey.club`, one shared identity).
+
+**Still TODO:** Stoked — read the `atproto_*` claims onto the chat profile to
+surface the bsky handle (Phase 4; the username already = `<user>`, no change); a
+standalone app-password page for already-claimed users; deploy wiring (Phase 5:
+add the `cooey` instance + the secrets + the `pds-pro-claim` Authentik client,
+run the Authentik scripts).

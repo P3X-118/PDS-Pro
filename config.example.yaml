@@ -83,3 +83,48 @@ goat:
   # Path to the goat binary inside the container. The Dockerfile installs
   # it at /usr/local/bin/goat.
   binary_path: "/usr/local/bin/goat"
+
+# ---------------------------------------------------------------------------
+# Cross-auth federation (atproto <-> Authentik) — OPTIONAL.
+#
+# When the `atproto` block is present (together with `authentik`), pds-pro
+# becomes the management plane for the Discord -> Authentik -> Stoked + bsky
+# "session-broker" identity model: an end user claims a handle at /claim,
+# pds-pro creates the atproto account on the named instance and writes the
+# DID/handle back onto the Authentik user. See the CLAUDE.md "Cross-auth
+# federation" section + pds-pro memory crossauth-atproto-federation.md.
+# ---------------------------------------------------------------------------
+
+# Authentik API used to write the linked atproto identity onto users. Token =
+# the svc-pds-pro-atproto-writer API token (view_user + change_user), created by
+# apps/authentik/scripts/sgc/provision-atproto-writer-token.py.
+# authentik:
+#   base_url: "https://auth.cooey.club"            # reachable over the SGC mesh
+#   token_file: "/run/secrets/pds-pro/authentik-token"
+
+# ntfy topic alerted when an atproto provision fails (non-blocking; the user is
+# flagged status=error and the reconciler retries). Optional.
+# ntfy:
+#   base_url: "https://ntfy.<host>"
+#   topic: "eagledrive-admin"
+#   token_file: "/run/secrets/pds-pro/ntfy-token"  # optional, for protected topics
+
+# The atproto federation binding. `instance` MUST be one of the instances above.
+# atproto:
+#   instance: "cooey"                              # which PDS hosts claimed accounts
+#   # handle_domain is the BARE, user-facing domain. It MUST drop the service
+#   # prefix the PDS host carries (pds.cooey.club / bsky.cooey.club -> cooey.club)
+#   # so handles render as <user>.cooey.club, never <user>.pds.cooey.club. The
+#   # instance's pds_host above keeps the real (prefixed) service endpoint; this
+#   # is the same split the SGC playbook does (pds_handle_domain strips "pds.").
+#   handle_domain: "cooey.club"                    # handles are <localpart>.cooey.club
+#   managed_password_secret_file: "/run/secrets/pds-pro/atproto-managed-secret"
+#   # End-user OIDC for the self-service /claim flow (cooey brand; NOT the
+#   # operator login and NOT allowlist-gated). callback_url MUST be
+#   # <base_url>/claim/callback. Provisioned as its own Authentik OIDC client.
+#   claim:
+#     issuer_url: "https://auth.cooey.club/application/o/pds-pro-claim/"
+#     client_id: "pds-pro-claim"
+#     client_secret_file: "/run/secrets/pds-pro/claim-oidc-secret"
+#     callback_url: "https://admin.pds.example.com/claim/callback"
+#     # scopes: ["openid", "profile", "email"]     # default

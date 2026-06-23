@@ -118,6 +118,29 @@ func RegisterProviders(cfg *config.Config, sm *Manager) ([]string, error) {
 		enabled = append(enabled, "twitterv2")
 	}
 
+	// End-user claim provider (cross-auth federation). Registered with goth so
+	// gothic can drive the /claim/* OIDC round-trip, but deliberately NOT added
+	// to `enabled` — it is the end-user flow on the cooey brand, never an
+	// operator login button. config.Load validated its fields when present.
+	if cfg.Atproto != nil && cfg.Atproto.Claim != nil {
+		o := cfg.Atproto.Claim
+		secret, err := config.ReadSecretFile(o.ClientSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("claim oidc secret: %w", err)
+		}
+		scopes := o.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "profile", "email"}
+		}
+		discovery := strings.TrimRight(o.IssuerURL, "/") + "/.well-known/openid-configuration"
+		p, err := openidConnect.New(o.ClientID, secret, o.CallbackURL, discovery, scopes...)
+		if err != nil {
+			return nil, fmt.Errorf("claim oidc provider (discovery %s): %w", discovery, err)
+		}
+		p.SetName("claim")
+		providers = append(providers, p)
+	}
+
 	if len(providers) == 0 {
 		return nil, fmt.Errorf("no OAuth providers configured")
 	}

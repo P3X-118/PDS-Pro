@@ -21,9 +21,9 @@ const sessionName = "pds-pro"
 type sessionUserKey struct{}
 
 type SessionUser struct {
-	Subject  string
-	Email    string
-	Name     string
+	Subject   string
+	Email     string
+	Name      string
 	Provider  string
 	Roles     []string
 	Instances []string
@@ -31,9 +31,9 @@ type SessionUser struct {
 }
 
 type Manager struct {
-	store    *sessions.CookieStore
-	secure   bool
-	maxAge   int
+	store  *sessions.CookieStore
+	secure bool
+	maxAge int
 }
 
 func NewManager(secretFile string, secure bool, maxAgeSec int) (*Manager, error) {
@@ -144,4 +144,3 @@ func trimNewline(b []byte) []byte {
 	}
 	return b
 }
-
