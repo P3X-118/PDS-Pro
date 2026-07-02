@@ -37,10 +37,14 @@ type Server struct {
 	// hookSecret authenticates the Authentik user-creation webhook; empty
 	// disables the /hooks/authentik endpoint.
 	hookSecret string
+	// brokerSecret authenticates the internal atproto session-broker endpoint
+	// (POST /internal/atproto-session), called server-to-server by chat (delta)
+	// to embed Bluesky for an already-authenticated user; empty disables it.
+	brokerSecret string
 }
 
-func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al audit.Logger, providers []string, link *linkage.Service, hookSecret string) *Server {
-	return &Server{cfg: cfg, tpl: tpl, sessions: sm, audit: al, providers: providers, link: link, hookSecret: hookSecret}
+func New(cfg *config.Config, tpl Templates, sm *auth.Manager, al audit.Logger, providers []string, link *linkage.Service, hookSecret, brokerSecret string) *Server {
+	return &Server{cfg: cfg, tpl: tpl, sessions: sm, audit: al, providers: providers, link: link, hookSecret: hookSecret, brokerSecret: brokerSecret}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -70,6 +74,15 @@ func (s *Server) Routes() http.Handler {
 	// is the backstop. Mounted only when a hook secret is configured.
 	if s.link != nil && s.hookSecret != "" {
 		r.Post("/hooks/authentik", s.authentikHook)
+	}
+
+	// Internal atproto session broker: chat (delta) authenticates the end user,
+	// then calls this server-to-server (bearer broker secret, over the mesh /
+	// same host) to obtain an atproto session for that user's OWN linked account,
+	// so chat can embed Bluesky without a second login. NOT browser-facing.
+	// Mounted only when federation + a broker secret are configured.
+	if s.link != nil && s.brokerSecret != "" {
+		r.Post("/internal/atproto-session", s.atprotoSession)
 	}
 
 	r.Group(func(r chi.Router) {
@@ -965,4 +978,64 @@ func (s *Server) hookAuthorized(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// atprotoSession brokers an atproto session for an already-authenticated cooey
+// user so a first-party surface (chat) can embed Bluesky without a separate
+// login. INTERNAL ONLY: authenticated by the broker shared secret and called
+// server-to-server by delta (which authenticates the end user and passes their
+// email); never exposed to browsers. The handle is resolved from Authentik (not
+// taken from input), so a caller only ever obtains the named user's OWN session.
+func (s *Server) atprotoSession(w http.ResponseWriter, r *http.Request) {
+	if !s.brokerAuthorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var body struct {
+		Email    string `json:"email"`
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	email := strings.TrimSpace(body.Email)
+	username := strings.TrimSpace(body.Username)
+	if email == "" && username == "" {
+		http.Error(w, "email or username required", http.StatusBadRequest)
+		return
+	}
+	sess, err := s.link.BrokerSessionForUser(r.Context(), email, username)
+	if err != nil {
+		http.Error(w, "no linked atproto account", http.StatusNotFound)
+		return
+	}
+	pds := ""
+	if s.cfg.Atproto != nil {
+		if inst := s.cfg.Instance(s.cfg.Atproto.Instance); inst != nil {
+			pds = inst.PDSHost
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"accessJwt":  sess.AccessJwt,
+		"refreshJwt": sess.RefreshJwt,
+		"did":        sess.DID,
+		"handle":     sess.Handle,
+		"pds":        pds,
+	})
+}
+
+// brokerAuthorized constant-time compares the request bearer token against the
+// broker secret. Bearer only (server-to-server; no query-param fallback).
+func (s *Server) brokerAuthorized(r *http.Request) bool {
+	want := []byte(s.brokerSecret)
+	if len(want) == 0 {
+		return false
+	}
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, "Bearer ")), want) == 1
 }

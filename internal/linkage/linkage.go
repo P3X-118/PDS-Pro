@@ -134,6 +134,25 @@ func (s *Service) BrokerSession(ctx context.Context, handle string) (*atproto.Se
 	return atproto.CreateSession(ctx, inst.PDSHost, handle, s.ManagedPassword(localpartOf(handle)))
 }
 
+// BrokerSessionForUser resolves an Authentik user (by email and/or username) to
+// their linked atproto handle and mints a session on their behalf. This is the
+// entry point for first-party surfaces (chat) that authenticate the end user
+// themselves and need an embedded atproto session without a second login. The
+// handle is read from the linked Authentik record (never from caller input), so
+// a caller can only ever obtain a session for the user it names. Errors if the
+// user has no active linked account yet.
+func (s *Service) BrokerSessionForUser(ctx context.Context, email, username string) (*atproto.Session, error) {
+	user, err := s.ak.FindUser(ctx, authentik.Lookup{Email: email, Username: username})
+	if err != nil {
+		return nil, fmt.Errorf("broker: resolve user: %w", err)
+	}
+	ap := user.Atproto()
+	if ap == nil || ap.Status != "active" || ap.Handle == "" {
+		return nil, fmt.Errorf("broker: user has no active atproto account")
+	}
+	return s.BrokerSession(ctx, ap.Handle)
+}
+
 func (s *Service) atprotoInstance() (*config.PDSInstance, error) {
 	if s.cfg.Atproto == nil {
 		return nil, fmt.Errorf("linkage: atproto federation not configured")

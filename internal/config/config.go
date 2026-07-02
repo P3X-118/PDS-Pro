@@ -137,6 +137,12 @@ type AtprotoConfig struct {
 	// — if empty, the endpoint is disabled and only the periodic sweep runs.
 	WebhookSecretFile string `yaml:"webhook_secret_file,omitempty"`
 
+	// BrokerSecretFile authenticates the internal atproto session-broker endpoint
+	// (POST /internal/atproto-session) that chat (delta) calls server-to-server to
+	// embed Bluesky for an already-authenticated user. Optional — empty disables
+	// the endpoint. The same secret is configured on the delta (stoked) side.
+	BrokerSecretFile string `yaml:"broker_secret_file,omitempty"`
+
 	// MemberGroup scopes auto-provisioning to ONE Authentik group (the cooey
 	// members). REQUIRED on a shared Authentik: cooey shares its Authentik with
 	// other brands (eagledrive, bskypds.pro, …), so without this the sweep would

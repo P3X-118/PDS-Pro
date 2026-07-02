@@ -63,12 +63,19 @@ func main() {
 		}
 	}
 
+	brokerSecret := ""
+	if cfg.Atproto != nil && cfg.Atproto.BrokerSecretFile != "" {
+		if brokerSecret, err = config.ReadSecretFile(cfg.Atproto.BrokerSecretFile); err != nil {
+			log.Fatalf("atproto broker secret: %v", err)
+		}
+	}
+
 	tpls, err := loadTemplates(*templateDir)
 	if err != nil {
 		log.Fatalf("templates: %v", err)
 	}
 
-	srv := handlers.New(cfg, tpls, sm, al, providers, link, hookSecret)
+	srv := handlers.New(cfg, tpls, sm, al, providers, link, hookSecret, brokerSecret)
 
 	log.Printf("listening on %s (providers: %v, instances: %d, atproto: %t)", cfg.ListenAddr, providers, len(cfg.Instances), link != nil)
 	if err := http.ListenAndServe(cfg.ListenAddr, srv.Routes()); err != nil {

@@ -1,0 +1,14 @@
+# Keep secrets + local runtime state out of the build context and image layers.
+# The build stage does `COPY . .`; without this, a local .env (SMTP password),
+# a real config.yaml, or state/secrets dirs would land in build-stage layers.
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+!.env.example
+config.yaml
+state/
+secrets/
+*.log
+.claude/
