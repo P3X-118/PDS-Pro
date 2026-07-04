@@ -14,6 +14,7 @@ import (
 	"github.com/P3X-118/pds-pro/internal/audit"
 	"github.com/P3X-118/pds-pro/internal/auth"
 	"github.com/P3X-118/pds-pro/internal/authentik"
+	"github.com/P3X-118/pds-pro/internal/cloudflare"
 	"github.com/P3X-118/pds-pro/internal/config"
 	"github.com/P3X-118/pds-pro/internal/handlers"
 	"github.com/P3X-118/pds-pro/internal/linkage"
@@ -111,7 +112,18 @@ func buildLinkage(cfg *config.Config, al audit.Logger) *linkage.Service {
 		nc = ntfy.New(cfg.Ntfy.BaseURL, cfg.Ntfy.Topic, ntfyToken)
 	}
 	akc := authentik.NewClient(cfg.Authentik.BaseURL, akToken)
-	return linkage.NewService(cfg, akc, nc, al, managedSecret)
+
+	// Optional: a Cloudflare client so linkage can publish the _atproto.<handle>
+	// TXT that makes each provisioned handle externally resolvable.
+	var cf *cloudflare.Client
+	if cfg.Cloudflare != nil {
+		cfToken, err := config.ReadSecretFile(cfg.Cloudflare.APITokenFile)
+		if err != nil {
+			log.Fatalf("cloudflare token: %v", err)
+		}
+		cf = cloudflare.New(cfToken, cfg.Cloudflare.ZoneName)
+	}
+	return linkage.NewService(cfg, akc, nc, al, managedSecret, cf)
 }
 
 func loadTemplates(dir string) (handlers.Templates, error) {

@@ -37,6 +37,7 @@ import (
 	"github.com/P3X-118/pds-pro/internal/atproto"
 	"github.com/P3X-118/pds-pro/internal/audit"
 	"github.com/P3X-118/pds-pro/internal/authentik"
+	"github.com/P3X-118/pds-pro/internal/cloudflare"
 	"github.com/P3X-118/pds-pro/internal/config"
 	"github.com/P3X-118/pds-pro/internal/goat"
 	"github.com/P3X-118/pds-pro/internal/ntfy"
@@ -45,6 +46,7 @@ import (
 type Service struct {
 	cfg           *config.Config
 	ak            *authentik.Client
+	cf            *cloudflare.Client // optional; publishes _atproto.<handle> TXT
 	ntfy          *ntfy.Client
 	audit         audit.Logger
 	managedSecret string
@@ -58,9 +60,9 @@ type Service struct {
 	locks   map[string]*sync.Mutex
 }
 
-func NewService(cfg *config.Config, ak *authentik.Client, n *ntfy.Client, al audit.Logger, managedSecret string) *Service {
+func NewService(cfg *config.Config, ak *authentik.Client, n *ntfy.Client, al audit.Logger, managedSecret string, cf *cloudflare.Client) *Service {
 	return &Service{
-		cfg: cfg, ak: ak, ntfy: n, audit: al, managedSecret: managedSecret,
+		cfg: cfg, ak: ak, cf: cf, ntfy: n, audit: al, managedSecret: managedSecret,
 		trigger: make(chan struct{}, 1),
 		locks:   map[string]*sync.Mutex{},
 	}
@@ -230,6 +232,7 @@ func (s *Service) provisionAndLink(ctx context.Context, in ClaimInput, quiet boo
 					s.fail(ctx, in, user, handle, did, "link-back (recover existing): "+lerr.Error(), quiet)
 					return Result{Handle: handle, DID: did, Status: "error"}, lerr
 				}
+				s.ensureHandleResolution(ctx, handle, did)
 				s.audit.Log(audit.Entry{
 					TS: time.Now().UTC(), Subject: in.Sub, Email: in.Email, Provider: "oidc",
 					Instance: ac.Instance, Action: "atproto.provision", Result: "ok",
@@ -250,6 +253,9 @@ func (s *Service) provisionAndLink(ctx context.Context, in ClaimInput, quiet boo
 		return Result{Handle: handle, DID: did, Status: "error"}, err
 	}
 
+	// Make the new handle externally resolvable (best-effort, non-blocking).
+	s.ensureHandleResolution(ctx, handle, did)
+
 	s.audit.Log(audit.Entry{
 		TS: time.Now().UTC(), Subject: in.Sub, Email: in.Email, Provider: "oidc",
 		Instance: ac.Instance, Action: "atproto.provision", Result: "ok",
@@ -260,6 +266,63 @@ func (s *Service) provisionAndLink(ctx context.Context, in ClaimInput, quiet boo
 
 func (s *Service) link(ctx context.Context, user *authentik.User, sub, did, handle, pds string) error {
 	return s.ak.SetAtproto(ctx, user, authentik.Atproto{Sub: sub, DID: did, Handle: handle, Status: "active", PDS: pds})
+}
+
+// ensureHandleResolution publishes the `_atproto.<handle>` TXT (handle -> DID) so
+// the handle resolves externally, and — only when that record was newly written —
+// nudges a fresh atproto identity event so the relay/AppView re-resolves promptly
+// instead of leaving the account as `handle.invalid`. Entirely best-effort: DNS
+// and AppView indexing are eventual-consistency concerns and must never block or
+// fail provisioning. A no-op when Cloudflare is not configured, so other pds-pro
+// deployments are unaffected.
+func (s *Service) ensureHandleResolution(ctx context.Context, handle, did string) {
+	if s.cf == nil || handle == "" || did == "" {
+		return
+	}
+	changed, err := s.cf.UpsertTXT(ctx, "_atproto."+handle, "did="+did)
+	if err != nil {
+		log.Printf("atproto dns: _atproto.%s: %v", handle, err)
+		return
+	}
+	// Kick a fresh #identity event when we just (re)published the TXT, OR when the
+	// AppView still does not verify the handle (a prior kick failed, or the account
+	// predates its TXT). Steady state is quiet: once the record is correct and the
+	// AppView resolves the handle, neither condition holds and we do nothing.
+	if changed {
+		log.Printf("atproto dns: published _atproto.%s -> %s", handle, did)
+	} else if s.resolvesExternally(ctx, did, handle) {
+		return
+	}
+	if err := s.kickIdentity(ctx, did, handle); err != nil {
+		log.Printf("atproto dns: identity kick %s: %v", handle, err)
+	}
+}
+
+// resolvesExternally reports whether the bsky AppView currently verifies the
+// handle for this DID. Best-effort: on any error it returns true (assume fine) so
+// a transient AppView blip does not trigger needless identity kicks.
+func (s *Service) resolvesExternally(ctx context.Context, did, handle string) bool {
+	h, err := atproto.AppViewHandle(ctx, did)
+	if err != nil {
+		return true
+	}
+	return strings.EqualFold(h, handle)
+}
+
+// kickIdentity re-asserts the account's handle via the PDS admin API, sequencing
+// a #identity event that makes the relay/AppView re-resolve now that the handle's
+// TXT exists. It uses admin auth (not the account's managed password) so it works
+// even for accounts provisioned under an older managed secret.
+func (s *Service) kickIdentity(ctx context.Context, did, handle string) error {
+	inst, err := s.atprotoInstance()
+	if err != nil {
+		return err
+	}
+	adminPw, err := config.ReadSecretFile(inst.AdminPasswordFile)
+	if err != nil {
+		return fmt.Errorf("admin password: %w", err)
+	}
+	return atproto.AdminUpdateHandle(ctx, inst.PDSHost, adminPw, did, handle)
 }
 
 // Reconcile sweeps every provisionable member of the configured cooey group
@@ -294,6 +357,10 @@ func (s *Service) Reconcile(ctx context.Context) (ReconcileSummary, error) {
 		}
 		ap := u.Atproto()
 		if ap != nil && ap.Status == "active" && ap.DID != "" {
+			// Self-heal external handle resolution for already-provisioned
+			// members: publish a missing _atproto TXT (+ kick) if needed. A no-op
+			// once the record is correct, so this is quiet in steady state.
+			s.ensureHandleResolution(ctx, ap.Handle, ap.DID)
 			sum.Active++
 			continue
 		}

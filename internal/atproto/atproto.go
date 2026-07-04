@@ -96,6 +96,69 @@ func ResolveHandle(ctx context.Context, pdsHost, handle string) (string, error) 
 	return out.DID, nil
 }
 
+// AdminUpdateHandle re-asserts an account's handle using PDS admin auth
+// (com.atproto.admin.updateAccountHandle). Unlike an account-authed updateHandle
+// it needs no user session — so it works regardless of the account's (possibly
+// stale) managed password — and it reliably sequences a fresh #identity event on
+// the firehose, which prompts the relay/AppView to re-resolve the handle. That is
+// the nudge that clears `handle.invalid` once the account's `_atproto` TXT exists
+// (the AppView caches a failed resolution until the next identity event).
+func AdminUpdateHandle(ctx context.Context, pdsHost, adminPassword, did, handle string) error {
+	b, err := json.Marshal(map[string]string{"did": did, "handle": handle})
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(pdsHost, "/") + "/xrpc/com.atproto.admin.updateAccountHandle"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth("admin", adminPassword)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("atproto admin updateAccountHandle: %s", resp.Status)
+	}
+	return nil
+}
+
+// appViewBase is the public bsky AppView read endpoint. getProfile here returns
+// the handle the AppView has *verified* for a DID (or "handle.invalid" if it has
+// not), which is what we use to decide whether an account still needs an identity
+// nudge.
+const appViewBase = "https://public.api.bsky.app"
+
+// AppViewHandle returns the handle the bsky AppView currently verifies for a DID
+// via app.bsky.actor.getProfile. It returns "handle.invalid" when the AppView
+// cannot bidirectionally verify the handle yet. Used to detect accounts that
+// still need an identity nudge after their _atproto TXT is in place.
+func AppViewHandle(ctx context.Context, did string) (string, error) {
+	endpoint := appViewBase + "/xrpc/app.bsky.actor.getProfile?actor=" + url.QueryEscape(did)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("atproto getProfile %s: %s", did, resp.Status)
+	}
+	var out struct {
+		Handle string `json:"handle"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Handle, nil
+}
+
 // CreateAppPassword mints a named, revocable app-password using an active
 // session's access JWT. Returns the generated password (shown to the user once).
 func CreateAppPassword(ctx context.Context, pdsHost, accessJwt, name string) (string, error) {

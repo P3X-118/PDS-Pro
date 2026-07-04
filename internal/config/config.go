@@ -24,6 +24,11 @@ type Config struct {
 	Authentik *AuthentikConfig `yaml:"authentik,omitempty"`
 	Ntfy      *NtfyConfig      `yaml:"ntfy,omitempty"`
 	Atproto   *AtprotoConfig   `yaml:"atproto,omitempty"`
+
+	// Cloudflare (optional) lets pds-pro publish the `_atproto.<handle>` TXT
+	// record for each provisioned handle so it resolves externally. See
+	// CloudflareConfig / internal/cloudflare.
+	Cloudflare *CloudflareConfig `yaml:"cloudflare,omitempty"`
 }
 
 type SessionConfig struct {
@@ -104,6 +109,17 @@ type GoatConfig struct {
 type AuthentikConfig struct {
 	BaseURL   string `yaml:"base_url"`   // e.g. https://auth.cooey.club (reachable over the SGC mesh)
 	TokenFile string `yaml:"token_file"` // single-line Authentik API token
+}
+
+// CloudflareConfig lets pds-pro publish the `_atproto.<handle>` TXT record for a
+// provisioned handle so the bsky AppView can bidirectionally verify it (without
+// it the account shows as handle.invalid). Optional and orthogonal to the atproto
+// block: when absent, provisioning still works but external handle resolution
+// must be provided some other way (e.g. a wildcard). The API token needs
+// Zone:DNS:Edit on zone_name.
+type CloudflareConfig struct {
+	APITokenFile string `yaml:"api_token_file"` // single-line Cloudflare API token
+	ZoneName     string `yaml:"zone_name"`      // DNS zone that holds the handles, e.g. cooey.club
 }
 
 // NtfyConfig is the ntfy topic pds-pro posts to when an atproto provisioning
@@ -207,6 +223,11 @@ func Load(path string) (*Config, error) {
 			if cl.IssuerURL == "" || cl.ClientID == "" || cl.ClientSecretFile == "" || cl.CallbackURL == "" {
 				return nil, fmt.Errorf("atproto.claim requires issuer_url, client_id, client_secret_file, callback_url")
 			}
+		}
+	}
+	if c.Cloudflare != nil {
+		if c.Cloudflare.APITokenFile == "" || c.Cloudflare.ZoneName == "" {
+			return nil, fmt.Errorf("cloudflare config requires api_token_file and zone_name")
 		}
 	}
 	return &c, nil
